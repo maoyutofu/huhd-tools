@@ -8,7 +8,8 @@ edition = "2021"
 [dependencies]
 clap = { version = "3.1.6", features = ["derive"] }
 uuid = { version = "0.8", features = ["serde", "v4"] }
-hyper = { version = "0.14", features = ["full"] }
 tokio = { version = "1", features = ["full"] }
+warp = "0.3"
+futures = { version = "0.3", default-features = false }
+bytes = "1.0"
 lazy_static = "1.4.0"
-tokio-util = { version = "0.7.0", features = ["codec"] }

@@ -1,19 +1,18 @@
 #[macro_use]
 extern crate lazy_static;
 
+use bytes::BufMut;
 use clap::Parser;
-use hyper::header::{HeaderValue, CONTENT_TYPE, CONTENT_DISPOSITION};
-use tokio::fs::File;
-use tokio_util::codec::{BytesCodec, FramedRead};
-use hyper::service::{make_service_fn, service_fn};
-use hyper::{Body, Method, Request, Response, Result, StatusCode};
 use std::env;
+use std::net::SocketAddr;
 use std::path::Path;
 use uuid::Uuid;
+use warp::multipart::{FormData, Part};
+use warp::{hyper::Uri, Rejection, Filter, Reply};
 
-static NOTFOUND: &[u8] = b"Not Found";
+use futures::TryStreamExt;
 
-static FORM_HTML: &[u8] = br###"
+static FORM_HTML: &str = r###"
 <!DOCTYPE html>
 <html>
 <head>
@@ -36,7 +35,7 @@ struct Args {
     #[clap(short, long, default_value_t = 5567)]
     port: u16,
 
-    #[clap(short, long, default_value = "./")]
+    #[clap(short, long, default_value = ".")]
     dir: String,
 }
 
@@ -45,37 +44,44 @@ lazy_static! {
     static ref UUID: Uuid = Uuid::new_v4();
 }
 
-async fn upload(req: Request<Body>) ->  Result<Response<Body>> {
-    let uri_path = format!("/{}", UUID.to_string());
+async fn render_html_code() -> Result<Box<dyn Reply>, Rejection> {
+    Ok(Box::new(warp::reply::html(FORM_HTML)))
+}
 
-    if req.uri().path() == uri_path.as_str() && req.method() == &Method::GET {
-        return Ok(render_form());
-    } else if req.uri().path() == uri_path.as_str() && req.method() == &Method::POST {
-        return Ok(not_found());
+async fn upload_file(form: FormData) -> Result<Box<dyn Reply>, Rejection> {
+    let parts: Vec<Part> = form.try_collect().await.map_err(|e| {
+        eprintln!("form error: {}", e);
+        warp::reject::reject()
+    })?;
+
+    for p in parts {
+        if p.name() == "file" {
+            let filename = String::from(p.filename().unwrap());
+
+            let value = p.stream()
+                .try_fold(Vec::new(), |mut vec, data| {
+                    vec.put(data);
+                    async move { Ok(vec) }
+                })
+                .await
+                .map_err(|e| {
+                    eprintln!("reading file error: {}", e);
+                    warp::reject::reject()
+                })?;
+
+            let filename = format!("{}/{}", ARGS.dir, filename);
+            tokio::fs::write(&filename, value).await.map_err(|e| {
+                eprint!("error writing file: {}", e);
+                warp::reject::reject()
+            })?;
+        }
     }
-
-    Ok(not_found())
-}
-
-
-/// HTTP status code 404
-fn not_found() -> Response<Body> {
-    Response::builder()
-        .status(StatusCode::NOT_FOUND)
-        .body(NOTFOUND.into())
-        .unwrap()
-}
-
-fn render_form() -> Response<Body> {
-    Response::builder()
-        .status(StatusCode::OK)
-        .body(FORM_HTML.into())
-        .unwrap()
+    let uri: Uri = format!("/{}", UUID.to_string()).parse().unwrap();
+    Ok(Box::new(warp::redirect(uri)))
 }
 
 #[tokio::main]
 async fn main() {
-
     let dir = ARGS.dir.clone();
     let port = ARGS.port;
 
@@ -96,14 +102,23 @@ async fn main() {
         Err(_) => String::from("0.0.0.0"),
     };
 
-    let make_service = make_service_fn(|_| async { Ok::<_, hyper::Error>(service_fn(upload)) });
-
-    let addr = format!("{}:{}", host, port)
+    let addr: SocketAddr = format!("{}:{}", host, port)
         .parse()
         .expect("Unable to parse socket address");
-    let server = hyper::Server::bind(&addr).serve(make_service);
+
     println!("http://{}/{}", addr, UUID.to_string());
-    if let Err(e) = server.await {
-        eprintln!("error: {}", e);
-    }
+
+    // GET router
+    let render_html = warp::path(UUID.to_string()).and_then(render_html_code);
+    let get_routers = warp::get().and(render_html);
+
+    // POST router
+    let upload = warp::path(UUID.to_string())
+        .and(warp::multipart::form())
+        .and_then(upload_file);
+    let post_routers = warp::post().and(upload);
+
+    let rouoter = get_routers.or(post_routers);
+
+    warp::serve(rouoter).run(addr).await;
 }
