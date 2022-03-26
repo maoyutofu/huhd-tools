@@ -8,7 +8,7 @@ use std::net::SocketAddr;
 use std::path::Path;
 use uuid::Uuid;
 use warp::multipart::{FormData, Part};
-use warp::{hyper::Uri, Rejection, Filter, Reply};
+use warp::{Rejection, Filter, Reply};
 
 use futures::TryStreamExt;
 
@@ -76,8 +76,7 @@ async fn upload_file(form: FormData) -> Result<Box<dyn Reply>, Rejection> {
             })?;
         }
     }
-    let uri: Uri = format!("/{}", UUID.to_string()).parse().unwrap();
-    Ok(Box::new(warp::redirect(uri)))
+    Ok(Box::new("success"))
 }
 
 #[tokio::main]

@@ -2,16 +2,11 @@
 extern crate lazy_static;
 
 use clap::Parser;
-use hyper::header::{HeaderValue, CONTENT_TYPE, CONTENT_DISPOSITION};
-use tokio::fs::File;
-use tokio_util::codec::{BytesCodec, FramedRead};
-use hyper::service::{make_service_fn, service_fn};
-use hyper::{Body, Request, Response, Result, StatusCode};
 use std::env;
+use std::net::SocketAddr;
 use std::path::Path;
 use uuid::Uuid;
-
-static NOTFOUND: &[u8] = b"Not Found";
+use warp::Filter;
 
 #[derive(Parser, Debug)]
 #[clap(author, version, about, long_about = None)]
@@ -28,47 +23,8 @@ lazy_static! {
     static ref UUID: Uuid = Uuid::new_v4();
 }
 
-async fn download(req: Request<Body>) ->  Result<Response<Body>> {
-    let uri_path = format!("/{}", UUID.to_string());
-    if req.uri().path() == uri_path.as_str() {
-        let file = ARGS.file.clone();
-        return simple_file_send(&file).await;
-    }
-    
-    Ok(not_found())
-}
-
-
-/// HTTP status code 404
-fn not_found() -> Response<Body> {
-    Response::builder()
-        .status(StatusCode::NOT_FOUND)
-        .body(NOTFOUND.into())
-        .unwrap()
-}
-
-async fn simple_file_send(filename: &str) -> Result<Response<Body>> {
-    // Serve a file by asynchronously reading it by chunks using tokio-util crate.
-    if let Ok(file) = File::open(filename).await {
-        let stream = FramedRead::new(file, BytesCodec::new());
-        let body = Body::wrap_stream(stream);
-
-        let path_ = Path::new(filename);
-        let filename = path_.file_name().unwrap().to_str().unwrap();
-        let attachment_name = format!("attachment;fileName={}", filename);
-
-        let mut resp = Response::new(body);
-        resp.headers_mut().append(CONTENT_TYPE, HeaderValue::from_static("application/octet-stream"));
-        resp.headers_mut().append(CONTENT_DISPOSITION, HeaderValue::from_bytes(attachment_name.as_bytes()).unwrap());
-        return Ok(resp);
-    }
-
-    Ok(not_found())
-}
-
 #[tokio::main]
 async fn main() {
-
     let file = ARGS.file.clone();
     let port = ARGS.port;
 
@@ -89,14 +45,29 @@ async fn main() {
         Err(_) => String::from("0.0.0.0"),
     };
 
-    let make_service = make_service_fn(|_| async { Ok::<_, hyper::Error>(service_fn(download)) });
-
-    let addr = format!("{}:{}", host, port)
+    let addr: SocketAddr = format!("{}:{}", host, port)
         .parse()
         .expect("Unable to parse socket address");
-    let server = hyper::Server::bind(&addr).serve(make_service);
+
     println!("http://{}/{}", addr, UUID.to_string());
-    if let Err(e) = server.await {
-        eprintln!("error: {}", e);
-    }
+
+
+    let path_ = Path::new(file.as_str());
+    let filename = path_.file_name().unwrap().to_str().unwrap();
+    let attachment_name = format!("attachment;fileName={}", filename);
+
+    let download_router =
+        warp::path(UUID.to_string())
+            .and(warp::fs::file(file))
+            .with(warp::reply::with::header(
+                "Content-Type",
+                "application/octet-stream",
+            ))
+            .with(warp::reply::with::header(
+                "Content-Disposition",
+                attachment_name,
+            ));
+
+    let routers = warp::any().and(download_router);
+    warp::serve(routers).run(addr).await
 }
