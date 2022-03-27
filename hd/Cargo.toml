@@ -13,3 +13,7 @@ futures = { version = "0.3", default-features = false }
 tokio = { version = "1", features = ["full"] }
 lazy_static = "1.4.0"
 tokio-util = { version = "0.7.0", features = ["codec"] }
+
+[profile.release]
+panic = "abort"
+lto = true
