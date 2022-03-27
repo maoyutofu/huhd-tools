@@ -113,7 +113,7 @@ async fn main() {
 
     // POST router
     let upload = warp::path(UUID.to_string())
-        .and(warp::multipart::form())
+        .and(warp::multipart::form().max_length(5_000_000_000))
         .and_then(upload_file);
     let post_routers = warp::post().and(upload);
 
