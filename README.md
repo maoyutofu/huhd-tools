@@ -5,7 +5,7 @@
 ## 安装
 从 release 中下载二进制压缩包
 ``` shell
-tar -xvf huhd-tools-x86_64-unknown-linux-gnu-0.1.0.tar.gz
+tar -zxvf huhd-tools-x86_64-unknown-linux-gnu-0.1.0.tar.gz
 cd huhd-tools
 sudo ./install.sh
 ```
